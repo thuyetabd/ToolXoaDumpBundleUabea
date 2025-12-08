@@ -24,7 +24,7 @@ Thay vì phải chỉnh sửa trực tiếp trên hàng trăm file text hỗn đ
 
 1.  Clone repository này về máy hoặc tải file `.zip`:
     ```bash
-    git clone [https://github.com/username-cua-ban/UABE-Dump-Text-Manager.git](https://github.com/username-cua-ban/UABE-Dump-Text-Manager.git)
+    git clone [https://github.com/thuyetabd/ToolXoaDumpBundleUabea.git](https://github.com/thuyetabd/ToolXoaDumpBundleUabea.git)
     ```
 2.  Đảm bảo máy đã cài Python.
 
