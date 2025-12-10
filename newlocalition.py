@@ -4,12 +4,12 @@ import os
 
 # --- CẤU HÌNH ---
 INPUT_FILE = 'data.json'          
-OUTPUT_FILE = 'new_data.json'     
+OUTPUT_FILE = 'new_data.json'      
 EXPORT_TXT = 'source_english.txt' 
 IMPORT_TXT = 'translated.txt'     
-LANG_INDEX = 0                    
+LANG_INDEX = 0  # 0 là tiếng Anh (dòng đầu tiên trong Array)
 
-# --- HÀM DUYỆT ĐỆ QUY ---
+# --- HÀM DUYỆT ĐỆ QUY THÔNG MINH ---
 def traverse_json(node, operation, context, path=""):
     """
     node: Dữ liệu hiện tại
@@ -18,19 +18,37 @@ def traverse_json(node, operation, context, path=""):
     path: Đường dẫn hiện tại (để debug lỗi)
     """
     
-    # 1. Nếu là Dict
+    # 1. Nếu là Dictionary (Object {})
     if isinstance(node, dict):
-        # Kiểm tra xem node này có chứa text không
+        
+        # --- BỘ DÒ TÌM TEXT ARRAY ---
+        target_array = None
+        found_type = ""
+
+        # Trường hợp 1: Game cũ (Unity Localization Package)
         if 'texts' in node and isinstance(node['texts'], dict) and 'Array' in node['texts']:
-            text_array = node['texts']['Array']
+            target_array = node['texts']['Array']
+            found_type = "texts"
             
-            if isinstance(text_array, list) and len(text_array) > LANG_INDEX:
+        # Trường hợp 2: Game mới (I2 Localization)
+        elif 'Languages' in node and isinstance(node['Languages'], dict) and 'Array' in node['Languages']:
+            target_array = node['Languages']['Array']
+            found_type = "Languages"
+
+        # --- XỬ LÝ NẾU TÌM THẤY ---
+        if target_array is not None and isinstance(target_array, list):
+            # Kiểm tra xem có đủ ngôn ngữ không
+            if len(target_array) > LANG_INDEX:
+                
                 # --- EXPORT ---
                 if operation == 'export':
-                    raw_text = text_array[LANG_INDEX]
+                    raw_text = target_array[LANG_INDEX]
                     if raw_text is None: raw_text = ""
-                    # QUAN TRỌNG: Thay thế xuống dòng thật bằng ký tự '\n'
-                    safe_text = raw_text.replace('\n', '\\n')
+                    
+                    # --- SỬA LỖI: Xử lý cả \r và \n để đảm bảo 1 dòng duy nhất ---
+                    # Thay thế \r trước, sau đó mới thay thế \n
+                    safe_text = raw_text.replace('\r', '\\r').replace('\n', '\\n')
+                    
                     context['lines'].append(safe_text)
                     
                 # --- IMPORT ---
@@ -40,24 +58,26 @@ def traverse_json(node, operation, context, path=""):
                     
                     if current_idx < len(translated_lines):
                         line_content = translated_lines[current_idx]
-                        # QUAN TRỌNG: Đổi ngược '\n' thành xuống dòng thật
-                        final_text = line_content.replace('\\n', '\n')
                         
-                        text_array[LANG_INDEX] = final_text
+                        # --- SỬA LỖI: Đổi ngược cả \n và \r về nguyên gốc ---
+                        final_text = line_content.replace('\\n', '\n').replace('\\r', '\r')
+                        
+                        target_array[LANG_INDEX] = final_text
                         context['counter'] += 1
                     else:
-                        # Hết dòng trong file dịch nhưng JSON vẫn còn slot
                         if not context['error_shown']:
                             print(f"\n[LỖI] File dịch hết dòng tại vị trí JSON: {path}")
-                            print(f"Nội dung gốc tại đây là: {text_array[LANG_INDEX]}")
+                            print(f"Nội dung gốc tại đây là: {target_array[LANG_INDEX]}")
                             context['error_shown'] = True
+            
+            # Đã xử lý xong node này, không cần đào sâu vào children của nó nữa
             return
 
-        # Tiếp tục đào sâu
+        # Nếu không phải node chứa text, tiếp tục đào sâu vào các con của nó
         for key, value in node.items():
             traverse_json(value, operation, context, path + f"['{key}']")
 
-    # 2. Nếu là List
+    # 2. Nếu là List (Array [])
     elif isinstance(node, list):
         for index, item in enumerate(node):
             traverse_json(item, operation, context, path + f"[{index}]")
@@ -72,14 +92,17 @@ def export_text():
         return
 
     context = {'lines': []}
-    print("Đang xuất dữ liệu (đã xử lý ký tự xuống dòng)...")
+    print("Đang quét và xuất dữ liệu...")
     traverse_json(data, 'export', context)
 
-    with open(EXPORT_TXT, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(context['lines']))
-    
-    print(f"-> Đã xuất {len(context['lines'])} dòng ra '{EXPORT_TXT}'.")
-    print("LƯU Ý: Các chỗ xuống dòng đã được chuyển thành '\\n'. Đừng xóa chữ này khi dịch.")
+    if len(context['lines']) == 0:
+        print("CẢNH BÁO: Không tìm thấy dòng text nào! Kiểm tra lại cấu trúc JSON.")
+    else:
+        with open(EXPORT_TXT, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(context['lines']))
+        
+        print(f"-> Đã xuất {len(context['lines'])} dòng ra '{EXPORT_TXT}'.")
+        print("LƯU Ý: Các chỗ xuống dòng đã được chuyển thành '\\n' và '\\r'.")
 
 # --- NHẬP ---
 def import_text():
@@ -87,11 +110,15 @@ def import_text():
         print(f"Lỗi: Không tìm thấy file '{IMPORT_TXT}'")
         return
 
-    with open(INPUT_FILE, 'r', encoding='utf-8') as f:
-        data = json.load(f)
+    try:
+        with open(INPUT_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        print(f"Lỗi: Không tìm thấy file gốc {INPUT_FILE}")
+        return
     
     with open(IMPORT_TXT, 'r', encoding='utf-8') as f:
-        # Đọc file và loại bỏ ký tự xuống dòng thừa ở cuối mỗi dòng text
+        # Đọc file và loại bỏ ký tự xuống dòng thừa ở cuối dòng
         translated_lines = f.read().splitlines()
 
     context = {
@@ -114,7 +141,7 @@ def import_text():
         print(f"   - File Text có: {txt_lines} dòng")
         print(f"   - File JSON đã điền: {json_slots} dòng")
         if txt_lines > json_slots:
-            print(f"   -> Dư {txt_lines - json_slots} dòng trong file Text chưa được điền.")
+            print(f"   -> Dư {txt_lines - json_slots} dòng trong file Text chưa được dùng.")
         else:
             print(f"   -> Thiếu {json_slots - txt_lines} dòng (JSON còn chỗ nhưng hết text).")
 
